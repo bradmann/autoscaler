@@ -37,6 +37,7 @@ package model
 
 import (
 	"fmt"
+	"k8s.io/klog/v2"
 	"math"
 	"time"
 
@@ -213,6 +214,7 @@ func (a *AggregateContainerState) AddSample(sample *ContainerUsageSample) {
 			// RSS OOM sample will also add a sample in the next bucket as well, which is guaranteed to be the same increase or larger.
 			rssPeakRecommendation := a.AggregateRSSPeaks.Percentile(1.0)
 			a.AggregateRSSPeaks.AddOomSample(rssPeakRecommendation, 1.0, sample.MeasureStart)
+			klog.V(3).Infof("OOM Handling for JVM Heap, adding JVM Heap OOM sample with value %f and RSS OOM sample with value %f", sample.Usage, rssPeakRecommendation)
 		} else {
 			a.AggregateJVMHeapCommittedPeaks.AddSample(BytesFromMemoryAmount(sample.Usage), 1.0, sample.MeasureStart)
 		}
