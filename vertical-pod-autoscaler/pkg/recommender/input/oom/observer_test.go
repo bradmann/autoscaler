@@ -181,6 +181,7 @@ func TestJVMHeapOOMReceived(t *testing.T) {
 	timestamp, err := time.Parse(time.RFC3339, "2018-02-23T13:38:48Z")
 	assert.NoError(t, err)
 	assert.Equal(t, timestamp.Unix(), info.Timestamp.Unix())
+	assert.Equal(t, model.ResourceAmount(int64(2048)), info.MemoryLimit)
 }
 
 func TestMalformedPodReceived(t *testing.T) {

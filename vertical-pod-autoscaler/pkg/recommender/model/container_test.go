@@ -255,9 +255,7 @@ func TestRecordOOMRSSConsecutive(t *testing.T) {
 func TestRecordOOMJvmHeapCommittedConsecutive(t *testing.T) {
 	test := newContainerTest()
 
-	test.mockRSSHistogram.On("Percentile", 1.0).Return(1000.0 * mb)
 	test.mockJVMHeapHistogram.On("AddOomSample", 900.0*mb, 1.0, testTimestamp)
-	test.mockRSSHistogram.On("AddOomSample", 1000.0*mb, 1.0, testTimestamp)
 	assert.NoError(t, test.container.RecordOOM(testTimestamp, ResourceJVMHeapCommitted, ResourceAmount(900*mb)))
 
 	// Smaller OOMs are also recorded.

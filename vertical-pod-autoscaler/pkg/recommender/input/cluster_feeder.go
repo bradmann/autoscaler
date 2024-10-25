@@ -444,6 +444,17 @@ Loop:
 		select {
 		case oomInfo := <-feeder.oomChan:
 			klog.V(3).Infof("OOM detected %+v", oomInfo)
+			// On JVM Heap OOM, we need special handling.
+			// We must also add an RSS peak OOM (with value of memory limit), in order to keep the delta between RSS and JVM Heap the same or higher.
+			// When adding a JVM Heap OOM sample, we add a sample in the next biggest histogram bucket.
+			// Since RSS value is guaranteed to be greater than Heap, we add an oom sample in the RSS histogram as well,
+			// which is guaranteed to be the same increase or larger.
+			if oomInfo.Resource == model.ResourceJVMHeapCommitted {
+				if err = feeder.clusterState.RecordOOM(oomInfo.ContainerID, oomInfo.Timestamp, model.ResourceRSS, oomInfo.MemoryLimit); err != nil {
+					klog.Warningf("Failed to record OOM %+v. Reason: %+v", oomInfo, err)
+				}
+				klog.V(6).Infof("OOM Handling for JVM Heap, adding JVM Heap OOM sample with value %f and RSS OOM sample with value %f", oomInfo.Memory, oomInfo.MemoryLimit)
+			}
 			if err = feeder.clusterState.RecordOOM(oomInfo.ContainerID, oomInfo.Timestamp, oomInfo.Resource, oomInfo.Memory); err != nil {
 				klog.Warningf("Failed to record OOM %+v. Reason: %+v", oomInfo, err)
 			}

@@ -35,6 +35,9 @@ type OomInfo struct {
 	Memory      model.ResourceAmount
 	Resource    model.ResourceName
 	ContainerID model.ContainerID
+	// MemoryLimit is the memory limit of the container at the time of the OOM event.
+	// We need to store this information to add an extra sample to the RSS histogram on JVM Heap OOM.
+	MemoryLimit model.ResourceAmount
 }
 
 // Observer can observe pod resource update and collect OOM events.
@@ -234,6 +237,9 @@ func (o *observer) OnUpdate(oldObj, newObj interface{}) {
 							klog.Errorf("OOM observer received JVM OOM event without JVM Heap Size override: %v", oldSpec.Env)
 							continue
 						}
+
+						// We need to pass the memory limit of the OOMed container in order to also add an extra sample to the RSS histogram.
+						memoryLimit := oldSpec.Resources.Limits[apiv1.ResourceMemory]
 						oomInfoJVMHeapComitted := OomInfo{
 							Timestamp: containerStatus.LastTerminationState.Terminated.FinishedAt.Time.UTC(),
 							Memory:    model.ResourceAmount(jvmHeapSize.Value()),
@@ -245,6 +251,7 @@ func (o *observer) OnUpdate(oldObj, newObj interface{}) {
 								},
 								ContainerName: containerStatus.Name,
 							},
+							MemoryLimit: model.ResourceAmount(memoryLimit.Value()),
 						}
 						o.observedOomsChannel <- oomInfoJVMHeapComitted
 					}

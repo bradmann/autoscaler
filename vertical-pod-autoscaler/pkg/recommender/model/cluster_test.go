@@ -343,14 +343,11 @@ func TestClusterRecordOOMJvmHeapComitted(t *testing.T) {
 	// Get current peaks of JVM Heap Committed and RSS for comparison
 	aggregation := cluster.findOrCreateAggregateContainerState(testContainerID)
 	prevJVMHeapCommitted := aggregation.AggregateJVMHeapCommittedPeaks.Percentile(1.0)
-	prevRSS := aggregation.AggregateRSSPeaks.Percentile(1.0)
 	assert.NoError(t, cluster.RecordOOM(testContainerID, testTimestamp, ResourceJVMHeapCommitted, ResourceAmount(40.0*1024*1024*1024)))
 
 	// Verify that OOM was aggregated into the aggregated stats.
 	assert.Greaterf(t, aggregation.AggregateJVMHeapCommittedPeaks.Percentile(1.0), prevJVMHeapCommitted, "JVM Heap Committed should be greater than previous value")
-	// For JVM Heap OOM, we also add an OOM sample to RSS.
-	assert.Greaterf(t, aggregation.AggregateRSSPeaks.Percentile(1.0), prevRSS, "RSS should be greater than previous value")
-
+	assert.NotZero(t, aggregation.AggregateJVMHeapCommittedPeaks.Percentile(1.0))
 }
 
 // Verifies that AddSample and AddOrUpdateContainer methods return a proper
