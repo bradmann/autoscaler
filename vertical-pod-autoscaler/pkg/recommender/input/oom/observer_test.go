@@ -45,6 +45,9 @@ metadata:
 spec:
   containers:
   - name: Name11
+    env:
+    - name: OVERRIDE_JVM_HEAP_SIZE
+      value: "500M"
     resources:
       requests:
         memory: "1024"
@@ -80,6 +83,35 @@ status:
         reason: OOMKilled
 `
 
+const pod3Yaml = `
+apiVersion: v1
+kind: Pod
+metadata:
+  name: Pod1
+  namespace: mockNamespace
+spec:
+  containers:
+  - name: Name11
+    env:
+    - name: OVERRIDE_JVM_HEAP_SIZE
+      value: "500M"
+    resources:
+      requests:
+        memory: "1024"
+      limits:
+        memory: "2048"
+status:
+  containerStatuses:
+  - name: Name11
+    restartCount: 1
+    lastState:
+      terminated:
+        finishedAt: 2018-02-23T13:38:48Z
+        reason: Error
+        message: |
+          JVM Heap OOM
+`
+
 func newPod(yaml string) (*v1.Pod, error) {
 	decode := codecs.UniversalDeserializer().Decode
 	obj, _, err := decode([]byte(yaml), nil, nil)
@@ -106,7 +138,8 @@ func TestOOMReceived(t *testing.T) {
 	observer := NewObserver()
 	go observer.OnUpdate(p1, p2)
 
-	info := <-observer.observedOomsChannel
+	infos := <-observer.observedOomsChannel
+	info := infos[0]
 	container := info.ContainerID
 	assert.Equal(t, "mockNamespace", container.PodID.Namespace)
 	assert.Equal(t, "Pod1", container.PodID.PodName)
@@ -117,7 +150,8 @@ func TestOOMReceived(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, timestamp.Unix(), info.Timestamp.Unix())
 
-	infoRSS := <-observer.observedOomsChannel
+	infos = <-observer.observedOomsChannel
+	infoRSS := infos[0]
 	container = infoRSS.ContainerID
 	assert.Equal(t, "mockNamespace", container.PodID.Namespace)
 	assert.Equal(t, "Pod1", container.PodID.PodName)
@@ -127,6 +161,41 @@ func TestOOMReceived(t *testing.T) {
 	timestamp, err = time.Parse(time.RFC3339, "2018-02-23T13:38:48Z")
 	assert.NoError(t, err)
 	assert.Equal(t, timestamp.Unix(), infoRSS.Timestamp.Unix())
+}
+
+func TestJVMHeapOOMReceived(t *testing.T) {
+	p1, err := newPod(pod1Yaml)
+	assert.NoError(t, err)
+	p3, err := newPod(pod3Yaml)
+	assert.NoError(t, err)
+	observer := NewObserver()
+	go observer.OnUpdate(p1, p3)
+
+	infos := <-observer.observedOomsChannel
+	infoJVMHeap := infos[0]
+	container := infoJVMHeap.ContainerID
+	assert.Equal(t, "mockNamespace", container.PodID.Namespace)
+	assert.Equal(t, "Pod1", container.PodID.PodName)
+	assert.Equal(t, "Name11", container.ContainerName)
+	val, err := resource.ParseQuantity("500Mi")
+	assert.NoError(t, err)
+	assert.Equal(t, model.ResourceAmount(val.Value()), infoJVMHeap.Memory)
+	assert.Equal(t, model.ResourceJVMHeapCommitted, infoJVMHeap.Resource)
+	timestamp, err := time.Parse(time.RFC3339, "2018-02-23T13:38:48Z")
+	assert.NoError(t, err)
+	assert.Equal(t, timestamp.Unix(), infoJVMHeap.Timestamp.Unix())
+
+	infoRSS := infos[1]
+	container = infoRSS.ContainerID
+	assert.Equal(t, "mockNamespace", container.PodID.Namespace)
+	assert.Equal(t, "Pod1", container.PodID.PodName)
+	assert.Equal(t, "Name11", container.ContainerName)
+	assert.Equal(t, model.ResourceAmount(int64(2048)), infoRSS.Memory)
+	assert.Equal(t, model.ResourceRSS, infoRSS.Resource)
+	timestamp, err = time.Parse(time.RFC3339, "2018-02-23T13:38:48Z")
+	assert.NoError(t, err)
+	assert.Equal(t, timestamp.Unix(), infoRSS.Timestamp.Unix())
+
 }
 
 func TestMalformedPodReceived(t *testing.T) {
