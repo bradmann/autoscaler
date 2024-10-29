@@ -185,7 +185,7 @@ type clusterStateFeeder struct {
 	coreClient          corev1.CoreV1Interface
 	specClient          spec.SpecClient
 	metricsClient       metrics.MetricsClient
-	oomChan             <-chan oom.OomInfo
+	oomChan             <-chan []oom.OomInfo
 	vpaCheckpointClient vpa_api.VerticalPodAutoscalerCheckpointsGetter
 	vpaLister           vpa_lister.VerticalPodAutoscalerLister
 	clusterState        *model.ClusterState
@@ -442,10 +442,13 @@ func (feeder *clusterStateFeeder) LoadRealTimeMetrics() {
 Loop:
 	for {
 		select {
-		case oomInfo := <-feeder.oomChan:
-			klog.V(3).Infof("OOM detected %+v", oomInfo)
-			if err = feeder.clusterState.RecordOOM(oomInfo.ContainerID, oomInfo.Timestamp, oomInfo.Resource, oomInfo.Memory); err != nil {
-				klog.Warningf("Failed to record OOM %+v. Reason: %+v", oomInfo, err)
+		case oomInfos := <-feeder.oomChan:
+			for _, oomInfo := range oomInfos {
+				klog.V(3).Infof("OOM detected %+v", oomInfo)
+
+				if err = feeder.clusterState.RecordOOM(oomInfo.ContainerID, oomInfo.Timestamp, oomInfo.Resource, oomInfo.Memory); err != nil {
+					klog.Warningf("Failed to record OOM %+v. Reason: %+v", oomInfo, err)
+				}
 			}
 		default:
 			break Loop

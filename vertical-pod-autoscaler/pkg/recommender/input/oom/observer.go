@@ -39,24 +39,24 @@ type OomInfo struct {
 
 // Observer can observe pod resource update and collect OOM events.
 type Observer interface {
-	GetObservedOomsChannel() chan OomInfo
+	GetObservedOomsChannel() chan []OomInfo
 	OnEvent(*apiv1.Event)
 	cache.ResourceEventHandler
 }
 
 // observer can observe pod resource update and collect OOM events.
 type observer struct {
-	observedOomsChannel chan OomInfo
+	observedOomsChannel chan []OomInfo
 }
 
 // NewObserver returns new instance of the observer.
 func NewObserver() *observer {
 	return &observer{
-		observedOomsChannel: make(chan OomInfo, 5000),
+		observedOomsChannel: make(chan []OomInfo, 5000),
 	}
 }
 
-func (o *observer) GetObservedOomsChannel() chan OomInfo {
+func (o *observer) GetObservedOomsChannel() chan []OomInfo {
 	return o.observedOomsChannel
 }
 
@@ -112,7 +112,7 @@ func parseEvictionEvent(event *apiv1.Event) []OomInfo {
 func (o *observer) OnEvent(event *apiv1.Event) {
 	klog.V(1).Infof("OOM Observer processing event: %+v", event)
 	for _, oomInfo := range parseEvictionEvent(event) {
-		o.observedOomsChannel <- oomInfo
+		o.observedOomsChannel <- []OomInfo{oomInfo}
 	}
 }
 
@@ -177,46 +177,97 @@ func (o *observer) OnUpdate(oldObj, newObj interface{}) {
 
 	for _, containerStatus := range newPod.Status.ContainerStatuses {
 		if containerStatus.RestartCount > 0 &&
-			containerStatus.LastTerminationState.Terminated != nil &&
-			containerStatus.LastTerminationState.Terminated.Reason == "OOMKilled" {
+			containerStatus.LastTerminationState.Terminated != nil {
+			if containerStatus.LastTerminationState.Terminated.Reason == "OOMKilled" {
 
-			oldStatus := findStatus(containerStatus.Name, oldPod.Status.ContainerStatuses)
-			if oldStatus != nil && containerStatus.RestartCount > oldStatus.RestartCount {
-				oldSpec := findSpec(containerStatus.Name, oldPod.Spec.Containers)
-				if oldSpec != nil {
-					// Artificial memory sample is created based on the memory request.
-					memory := oldSpec.Resources.Requests[apiv1.ResourceMemory]
-					oomInfo := OomInfo{
-						Timestamp: containerStatus.LastTerminationState.Terminated.FinishedAt.Time.UTC(),
-						Memory:    model.ResourceAmount(memory.Value()),
-						Resource:  model.ResourceMemory,
-						ContainerID: model.ContainerID{
-							PodID: model.PodID{
-								Namespace: newPod.ObjectMeta.Namespace,
-								PodName:   newPod.ObjectMeta.Name,
+				oldStatus := findStatus(containerStatus.Name, oldPod.Status.ContainerStatuses)
+				if oldStatus != nil && containerStatus.RestartCount > oldStatus.RestartCount {
+					oldSpec := findSpec(containerStatus.Name, oldPod.Spec.Containers)
+					if oldSpec != nil {
+						// Artificial memory sample is created based on the memory request.
+						memory := oldSpec.Resources.Requests[apiv1.ResourceMemory]
+						oomInfo := OomInfo{
+							Timestamp: containerStatus.LastTerminationState.Terminated.FinishedAt.Time.UTC(),
+							Memory:    model.ResourceAmount(memory.Value()),
+							Resource:  model.ResourceMemory,
+							ContainerID: model.ContainerID{
+								PodID: model.PodID{
+									Namespace: newPod.ObjectMeta.Namespace,
+									PodName:   newPod.ObjectMeta.Name,
+								},
+								ContainerName: containerStatus.Name,
 							},
-							ContainerName: containerStatus.Name,
-						},
-					}
-					o.observedOomsChannel <- oomInfo
+						}
+						o.observedOomsChannel <- []OomInfo{oomInfo}
 
-					// Artificial RSS sample is created based on the memory limit.
-					// The generated RSS recommendation will then be higher than the memory limit because the
-					// RSS binary decaying histogram recommends the max RSS observed in some past period.
-					memoryLimit := oldSpec.Resources.Limits[apiv1.ResourceMemory]
-					oomInfoRSS := OomInfo{
-						Timestamp: containerStatus.LastTerminationState.Terminated.FinishedAt.Time.UTC(),
-						Memory:    model.ResourceAmount(memoryLimit.Value()),
-						Resource:  model.ResourceRSS,
-						ContainerID: model.ContainerID{
-							PodID: model.PodID{
-								Namespace: newPod.ObjectMeta.Namespace,
-								PodName:   newPod.ObjectMeta.Name,
+						// Artificial RSS sample is created based on the memory limit.
+						// The generated RSS recommendation will then be higher than the memory limit because the
+						// RSS binary decaying histogram recommends the max RSS observed in some past period.
+						memoryLimit := oldSpec.Resources.Limits[apiv1.ResourceMemory]
+						oomInfoRSS := OomInfo{
+							Timestamp: containerStatus.LastTerminationState.Terminated.FinishedAt.Time.UTC(),
+							Memory:    model.ResourceAmount(memoryLimit.Value()),
+							Resource:  model.ResourceRSS,
+							ContainerID: model.ContainerID{
+								PodID: model.PodID{
+									Namespace: newPod.ObjectMeta.Namespace,
+									PodName:   newPod.ObjectMeta.Name,
+								},
+								ContainerName: containerStatus.Name,
 							},
-							ContainerName: containerStatus.Name,
-						},
+						}
+						o.observedOomsChannel <- []OomInfo{oomInfoRSS}
 					}
-					o.observedOomsChannel <- oomInfoRSS
+				}
+				// On JVM Heap OOM, the container is restarted with Reason "Error" and Message "JVM Heap OOM"
+				// JVM Heap OOM is a non-standard message that gets added by our custom bazel build target.
+				// We must check string Contains because other additions to the message are possible.
+			} else if containerStatus.LastTerminationState.Terminated.Reason == "Error" &&
+				strings.Contains(containerStatus.LastTerminationState.Terminated.Message, "JVM Heap OOM") {
+
+				oldStatus := findStatus(containerStatus.Name, oldPod.Status.ContainerStatuses)
+				if oldStatus != nil && containerStatus.RestartCount > oldStatus.RestartCount {
+					oldSpec := findSpec(containerStatus.Name, oldPod.Spec.Containers)
+					if oldSpec != nil {
+						jvmHeapSize := findContainerOverrideJvmHeapSizeEnv(oldSpec.Env)
+						if jvmHeapSize == nil {
+							klog.Errorf("OOM observer received JVM OOM event without JVM Heap Size override: %v", oldSpec.Env)
+							continue
+						}
+
+						// On JVM Heap OOM, we need special handling.
+						// We must also add an RSS peak OOM (with value of memory limit), in order to keep the delta between RSS and JVM Heap the same or higher.
+						// When adding a JVM Heap OOM sample, we add a sample in the next biggest histogram bucket.
+						// Since RSS value is guaranteed to be greater than Heap, we add an oom sample in the RSS histogram as well,
+						// which is guaranteed to be the same increase or larger.
+						oomInfoJVMHeapComitted := OomInfo{
+							Timestamp: containerStatus.LastTerminationState.Terminated.FinishedAt.Time.UTC(),
+							Memory:    model.ResourceAmount(jvmHeapSize.Value()),
+							Resource:  model.ResourceJVMHeapCommitted,
+							ContainerID: model.ContainerID{
+								PodID: model.PodID{
+									Namespace: newPod.ObjectMeta.Namespace,
+									PodName:   newPod.ObjectMeta.Name,
+								},
+								ContainerName: containerStatus.Name,
+							},
+						}
+
+						memoryLimit := oldSpec.Resources.Limits[apiv1.ResourceMemory]
+						oomInfoRSS := OomInfo{
+							Timestamp: containerStatus.LastTerminationState.Terminated.FinishedAt.Time.UTC(),
+							Memory:    model.ResourceAmount(memoryLimit.Value()),
+							Resource:  model.ResourceRSS,
+							ContainerID: model.ContainerID{
+								PodID: model.PodID{
+									Namespace: newPod.ObjectMeta.Namespace,
+									PodName:   newPod.ObjectMeta.Name,
+								},
+								ContainerName: containerStatus.Name,
+							},
+						}
+						o.observedOomsChannel <- []OomInfo{oomInfoJVMHeapComitted, oomInfoRSS}
+					}
 				}
 			}
 		}
