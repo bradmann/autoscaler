@@ -427,4 +427,8 @@ type HistogramCheckpoint struct {
 
 	// Sum of samples to be used as denominator for weights from BucketWeights.
 	TotalWeight float64 `json:"totalWeight,omitempty" protobuf:"bytes,3,opt,name=totalWeight"`
+
+	// Number of buckets in the histogram, which corresponds to the growth rate of each bucket.
+	// Only used for RSS and JVM Heap bucket scheme migration.
+	NumBuckets int `json:"numBuckets,omitempty" protobuf:"bytes,4,opt,name=numBuckets"`
 }
