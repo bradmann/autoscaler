@@ -235,6 +235,7 @@ func (h *binaryDecayingHistogram) SaveToChekpoint() (*vpa_types.HistogramCheckpo
 	result := vpa_types.HistogramCheckpoint{
 		BucketWeights:      make(map[int]uint32),
 		ReferenceTimestamp: metav1.NewTime(time.Unix(int64(h.lastDayIndex*60*60*24), 0)),
+		BucketGrowthRate:   0.05,
 	}
 	for day := h.lastDayIndex; day > h.lastDayIndex-h.retentionDays && day >= 0; day-- {
 		bucket := h.bucketForDay[day%h.retentionDays]
