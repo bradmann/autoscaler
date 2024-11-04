@@ -31,6 +31,13 @@ import (
 	"k8s.io/klog/v2"
 )
 
+const (
+	// RSSBinaryDecayingHistogramNumBuckets is the annotation key for the number of buckets in the RSS binary decaying histogram.
+	RSSBinaryDecayingHistogramNumBuckets = "RSSBinaryDecayingHistogramNumBuckets"
+	// JVMHeapCommittedBinaryDecayingHistogramNumBuckets is the annotation key for the number of buckets in the JVM Heap committed binary decaying histogram.
+	JVMHeapCommittedBinaryDecayingHistogramNumBuckets = "JVMHeapCommittedBinaryDecayingHistogramNumBuckets"
+)
+
 // CheckpointWriter persistently stores aggregated historical usage of containers
 // controlled by VPA objects. This state can be restored to initialize the model after restart.
 type CheckpointWriter interface {
@@ -106,6 +113,12 @@ func (writer *checkpointWriter) StoreCheckpoints(ctx context.Context, now time.T
 				},
 				Status: *containerCheckpoint,
 			}
+
+			// These annotations are passed as metadata to signify the bucket growth rate of the JVM Heap and RSS binary decaying histograms.
+			vpaCheckpoint.ObjectMeta.Annotations = make(map[string]string)
+			vpaCheckpoint.ObjectMeta.Annotations[RSSBinaryDecayingHistogramNumBuckets] = fmt.Sprintf("%d", containerCheckpoint.RSSHistogram.NumBuckets)
+			vpaCheckpoint.ObjectMeta.Annotations[JVMHeapCommittedBinaryDecayingHistogramNumBuckets] = fmt.Sprintf("%d", containerCheckpoint.JVMHeapCommittedHistogram.NumBuckets)
+
 			err = api_util.CreateOrUpdateVpaCheckpoint(writer.vpaCheckpointClient.VerticalPodAutoscalerCheckpoints(vpa.ID.Namespace), &vpaCheckpoint)
 			if err != nil {
 				klog.Errorf("Cannot save VPA %s/%s checkpoint for %s. Reason: %+v",

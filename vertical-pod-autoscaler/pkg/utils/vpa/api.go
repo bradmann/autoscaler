@@ -196,6 +196,11 @@ func CreateOrUpdateVpaCheckpoint(vpaCheckpointClient vpa_api.VerticalPodAutoscal
 		Path:  "/status",
 		Value: vpaCheckpoint.Status,
 	})
+	patches = append(patches, patchRecord{
+		Op:    "replace",
+		Path:  "/metadata/annotations",
+		Value: vpaCheckpoint.Annotations,
+	})
 	bytes, err := json.Marshal(patches)
 	if err != nil {
 		return fmt.Errorf("Cannot marshal VPA checkpoint status patches %+v. Reason: %+v", patches, err)
