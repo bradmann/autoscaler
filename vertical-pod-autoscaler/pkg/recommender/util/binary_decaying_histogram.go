@@ -114,6 +114,8 @@ func (h *binaryDecayingHistogram) addSampleToBucket(bucket uint16, dayIndex int)
 }
 
 func (h *binaryDecayingHistogram) addSample(value float64, dayIndex int, isOOM bool) {
+	// We add 1 to the bucket index to account for the zero indexing of the binary decaying histogram.
+	// The zero index indicates no sample, so we have to shift all bucket values by 1.
 	bucket := h.options.FindBucket(value) + 1
 	if isOOM {
 		// OOM samples are stored in the next bucket to differentiate them
@@ -264,6 +266,17 @@ func (h *binaryDecayingHistogram) LoadFromCheckpoint(checkpoint *vpa_types.Histo
 		basicHistogram.LoadFromCheckpoint(checkpoint)
 		h.AddSample(basicHistogram.Percentile(1.0), 1, time.Now())
 	} else {
+		// If the checkpoint does not have the same number of buckets as the histogram, we need to convert the checkpointed histogram
+		// 176 buckets indicates 5% growth rate.
+		// We don't dynamically calculate the growth rate because from numBuckets because it is not accurate due to floating points and rounding.
+		if checkpoint.NumBuckets != h.options.NumBuckets() {
+			if checkpoint.NumBuckets == 176 {
+				checkpoint.BucketWeights = h.convertCheckpointBuckets(checkpoint.BucketWeights, checkpoint.NumBuckets, 1.05)
+			} else if checkpoint.NumBuckets != 0 {
+				// If the checkpoint has 0 numBuckets, it means that the Checkpoint doesn't have this histogram at all.
+				return fmt.Errorf("cannot load from checkpoint: checkpoint has different number of buckets %d than the histogram %d", checkpoint.NumBuckets, h.options.NumBuckets())
+			}
+		}
 		if checkpoint.ReferenceTimestamp.Time.IsZero() {
 			h.lastDayIndex = 0
 		} else {
@@ -283,4 +296,30 @@ func (h *binaryDecayingHistogram) LoadFromCheckpoint(checkpoint *vpa_types.Histo
 		}
 	}
 	return nil
+}
+
+// convertCheckpointBuckets converts the checkpointed histogram with a different number of buckets to the histogram with the same number of buckets.
+// The ratio is the growth rate of the JVM Heap and RSS binary decaying histograms.
+// The checkpointed histogram is converted to the new histogram by finding the corresponding bucket in the new histogram for each bucket in the checkpointed histogram.
+func (h *binaryDecayingHistogram) convertCheckpointBuckets(checkpointBucketWeights map[int]uint32, fromNumBuckets int, ratio float64) map[int]uint32 {
+	options := &exponentialHistogramOptions{
+		numBuckets:      fromNumBuckets,
+		firstBucketSize: 1e7,
+		ratio:           ratio,
+		epsilon:         h.options.Epsilon(),
+	}
+
+	convertedBucketWeights := make(map[int]uint32)
+	for bucketIndex, daysValueMask := range checkpointBucketWeights {
+		memValue := 0.0
+		if bucketIndex < options.NumBuckets()-1 {
+			memValue = options.GetBucketStart(bucketIndex + 1)
+		} else {
+			memValue = options.GetBucketStart(bucketIndex)
+		}
+		newBucketIndex := h.options.FindBucket(memValue) - 1
+		convertedBucketWeights[newBucketIndex] = daysValueMask
+	}
+
+	return convertedBucketWeights
 }
