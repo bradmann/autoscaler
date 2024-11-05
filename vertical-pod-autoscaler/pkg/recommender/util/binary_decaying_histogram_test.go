@@ -402,7 +402,8 @@ func TestBinaryDecayingHistogramCheckpointing(t *testing.T) {
 func TestBinaryDecayingHistogramLoadFromDecayingHistogramCheckpoint(t *testing.T) {
 	for _, retentionDays := range retentionsToTest {
 		t.Run(fmt.Sprintf("retentionDays: %d", retentionDays), func(t *testing.T) {
-			h := NewDecayingHistogram(testBinaryDecayingHistogramOptions, time.Hour*24)
+			testDecayingHistogramOptions, _ := NewExponentialHistogramOptions(1e12, 1e7, 1.+0.05, epsilon)
+			h := NewDecayingHistogram(testDecayingHistogramOptions, time.Hour*24)
 			h.AddSample(v128Mib, 1.0, startTime)
 			h.AddSample(v256Mib, 1.0, startTime.AddDate(0, 0, 1))
 			s, err := h.SaveToChekpoint()

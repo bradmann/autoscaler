@@ -300,7 +300,7 @@ func (h *binaryDecayingHistogram) LoadFromCheckpoint(checkpoint *vpa_types.Histo
 		// If the checkpoint has 0 numBuckets, it means that the checkpoint has not been saved with the NumBuckets annotation, meaning it was the old default scheme of 5%.
 		if checkpoint.NumBuckets == 176 || checkpoint.NumBuckets == 0 {
 			oldOptions := &exponentialHistogramOptions{
-				numBuckets:      checkpoint.NumBuckets,
+				numBuckets:      176,
 				firstBucketSize: 1e7,
 				ratio:           1.05,
 				epsilon:         h.options.Epsilon(),
@@ -314,7 +314,7 @@ func (h *binaryDecayingHistogram) LoadFromCheckpoint(checkpoint *vpa_types.Histo
 			oldH.LoadFromCheckpointInternal(checkpoint)
 			h.convertFromDifferentHistogramBucketScheme(oldH)
 		} else if checkpoint.NumBuckets != 0 {
-			return fmt.Errorf("cannot load from checkpoint: checkpoint has different number of buckets %d than the histogram %d", checkpoint.NumBuckets, h.options.NumBuckets())
+			panic(fmt.Sprintf("cannot load from checkpoint:  checkpoint has different number of buckets %d than the histogram %d", checkpoint.NumBuckets, h.options.NumBuckets()))
 		}
 	}
 	return h.LoadFromCheckpointInternal(checkpoint)
