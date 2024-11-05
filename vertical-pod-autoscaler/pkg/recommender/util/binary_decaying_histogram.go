@@ -297,7 +297,8 @@ func (h *binaryDecayingHistogram) LoadFromCheckpoint(checkpoint *vpa_types.Histo
 	// 176 buckets indicates 5% growth rate.
 	// We don't dynamically calculate the growth rate because from numBuckets because it is not accurate due to floating points and rounding.
 	if checkpoint.NumBuckets != h.options.NumBuckets() {
-		if checkpoint.NumBuckets == 176 {
+		// If the checkpoint has 0 numBuckets, it means that the checkpoint has not been saved with the NumBuckets annotation, meaning it was the old default scheme of 5%.
+		if checkpoint.NumBuckets == 176 || checkpoint.NumBuckets == 0 {
 			oldOptions := &exponentialHistogramOptions{
 				numBuckets:      checkpoint.NumBuckets,
 				firstBucketSize: 1e7,
@@ -313,7 +314,6 @@ func (h *binaryDecayingHistogram) LoadFromCheckpoint(checkpoint *vpa_types.Histo
 			oldH.LoadFromCheckpointInternal(checkpoint)
 			h.convertFromDifferentHistogramBucketScheme(oldH)
 		} else if checkpoint.NumBuckets != 0 {
-			// If the checkpoint has 0 numBuckets, it means that the Checkpoint doesn't have this histogram at all.
 			return fmt.Errorf("cannot load from checkpoint: checkpoint has different number of buckets %d than the histogram %d", checkpoint.NumBuckets, h.options.NumBuckets())
 		}
 	}
